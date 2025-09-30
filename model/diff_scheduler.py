@@ -32,9 +32,15 @@ class NoiseScheduler():
                  beta_start=0.0001,
                  beta_end=0.02,
                  beta_schedule="linear",
-                 device=torch.device('cuda:0')):
+                 device=None):
         # 总的前向 diffusion step
         self.num_timesteps = num_timesteps
+        
+        # Set default device if none provided
+        if device is None:
+            self.device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
+        else:
+            self.device = device
 
         if beta_schedule == "linear":
             self.betas = torch.linspace(
@@ -70,19 +76,20 @@ class NoiseScheduler():
         self.posterior_mean_coef1 = self.betas * torch.sqrt(self.alphas_cumprod_prev) / (1. - self.alphas_cumprod)
         self.posterior_mean_coef2 = (1. - self.alphas_cumprod_prev) * torch.sqrt(self.alphas) / (
                     1. - self.alphas_cumprod)
-        self.betas = self.betas.to(device)
-        self.alphas = self.alphas.to(device)
-        self.alphas_cumprod = self.alphas_cumprod.to(device)
-        self.alphas_cumprod_prev = self.alphas_cumprod_prev.to(device)
-        self.sqrt_alphas_cumprod = self.sqrt_alphas_cumprod.to(device)
-        self.sqrt_one_minus_alphas_cumprod = self.sqrt_one_minus_alphas_cumprod.to(device)
-        self.sqrt_inv_alphas_cumprod = self.sqrt_inv_alphas_cumprod.to(device)
-        self.sqrt_inv_alphas_cumprod_minus_one = self.sqrt_inv_alphas_cumprod_minus_one.to(device)
-        self.posterior_mean_coef1 = self.posterior_mean_coef1.to(device)
-        self.posterior_mean_coef2 = self.posterior_mean_coef2.to(device)
+        self.betas = self.betas.to(self.device)
+        self.alphas = self.alphas.to(self.device)
+        self.alphas_cumprod = self.alphas_cumprod.to(self.device)
+        self.alphas_cumprod_prev = self.alphas_cumprod_prev.to(self.device)
+        self.sqrt_alphas_cumprod = self.sqrt_alphas_cumprod.to(self.device)
+        self.sqrt_one_minus_alphas_cumprod = self.sqrt_one_minus_alphas_cumprod.to(self.device)
+        self.sqrt_inv_alphas_cumprod = self.sqrt_inv_alphas_cumprod.to(self.device)
+        self.sqrt_inv_alphas_cumprod_minus_one = self.sqrt_inv_alphas_cumprod_minus_one.to(self.device)
+        self.posterior_mean_coef1 = self.posterior_mean_coef1.to(self.device)
+        self.posterior_mean_coef2 = self.posterior_mean_coef2.to(self.device)
 
     def reconstruct_x0(self, x_t, t, noise):
         # 输入 x_t,t,noise 来得到 x0
+        t = t.to(self.device)
         s1 = self.sqrt_inv_alphas_cumprod[t]
         s2 = self.sqrt_inv_alphas_cumprod_minus_one[t]
         s1 = s1.reshape(-1, 1).to(x_t.device)
@@ -93,6 +100,7 @@ class NoiseScheduler():
 
     def q_posterior(self, x_0, x_t, t):
         # 通过 x_0,x_t,t 来得到 x_t-1 的均
+        t = t.to(self.device)
         s1 = self.posterior_mean_coef1[t]
         s2 = self.posterior_mean_coef2[t]
 
@@ -106,6 +114,7 @@ class NoiseScheduler():
         if t == 0:
             return 0
 
+        t = t.to(self.device)
         variance = self.betas[t] * (1. - self.alphas_cumprod_prev[t]) / (1. - self.alphas_cumprod[t])
         # 此处的 tensor 的 clip 是将 var 最小限制在 1e-20
         variance = variance.clip(1e-20)
@@ -145,6 +154,8 @@ class NoiseScheduler():
     def add_noise(self, x_start, x_noise, timesteps):  # 正向加噪的过程
         # 输入 x_0,noise,t 来得到 x_t
         # print(x_start.device)
+        # Ensure timesteps are on the same device as the scheduler tensors
+        timesteps = timesteps.to(self.device)
         s1 = self.sqrt_alphas_cumprod[timesteps]
         s2 = self.sqrt_one_minus_alphas_cumprod[timesteps]
 
@@ -157,6 +168,7 @@ class NoiseScheduler():
         return self._undo(img_after_model, t)
 
     def _undo(self, img_out, t):
+        t = t.to(self.device)
         beta = self.betas[t]
 
         img_in_est = torch.sqrt(1 - beta) * img_out + \

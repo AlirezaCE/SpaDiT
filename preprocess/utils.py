@@ -30,7 +30,10 @@ def pca_with_torch(X, k=100):
 
     return X_pca
 
-def mask_tensor_with_masks(X, mask_zero_ratio, mask_nonzero_ratio, device='cuda:0'):
+def mask_tensor_with_masks(X, mask_zero_ratio, mask_nonzero_ratio, device=None):
+    # Use the device of the input tensor if no device is specified
+    if device is None:
+        device = X.device
     X = X.to(device)
     nonzero_indices = torch.nonzero(X, as_tuple=True)
     num_nonzero_to_mask = int(round(mask_nonzero_ratio * len(nonzero_indices[0])))

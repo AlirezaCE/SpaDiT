@@ -80,7 +80,8 @@ def normal_train_diff(model,
 
     noise_scheduler = NoiseScheduler(
         num_timesteps=diffusion_step,
-        beta_schedule='cosine'
+        beta_schedule='cosine',
+        device=device
     )
 
     criterion = diffusion_loss()

@@ -134,7 +134,8 @@ def train_valid_test():
 
     noise_scheduler = NoiseScheduler(
         num_timesteps=diffusion_step,
-        beta_schedule='cosine'
+        beta_schedule='cosine',
+        device=args.device
     )
 
     model.eval()
