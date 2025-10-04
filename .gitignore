@@ -2,5 +2,4 @@ datasets
 .idea
 venv
 *__pycache__
-result
 save
