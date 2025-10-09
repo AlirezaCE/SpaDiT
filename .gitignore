@@ -1,5 +1,6 @@
 datasets
 .idea
 venv
+scgpt_env
 *__pycache__
 save
