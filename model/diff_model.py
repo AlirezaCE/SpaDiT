@@ -294,6 +294,7 @@ class DiT_diff(nn.Module):
                  classes,
                  pca_dim,
                  mlp_ratio=4.0,
+                 use_scgpt=False,
                  **kwargs) -> None:
         super().__init__()
 
@@ -306,6 +307,8 @@ class DiT_diff(nn.Module):
         self.mlp_ratio = mlp_ratio
         self.dit_type = dit_type
         self.pca_dim = pca_dim
+        self.use_scgpt = use_scgpt
+
         self.in_layer = nn.Sequential(
             nn.Linear(st_input_size, hidden_size),
             # nn.Dropout(p=0.5)
@@ -319,7 +322,20 @@ class DiT_diff(nn.Module):
         )
 
         self.cond_layer_atten= SelfAttention2(self.condi_input_size, self.hidden_size)
-        self.cond_layer_mlp = SimpleMLP(self.condi_input_size, self.hidden_size, self.hidden_size*2)
+
+        # Use scGPT embeddings or SimpleMLP
+        if use_scgpt:
+            # For scGPT embeddings, we just project them to hidden_size*2
+            # No need to process raw gene expression
+            self.cond_layer_scgpt = nn.Sequential(
+                nn.Linear(self.condi_input_size, self.hidden_size * 2),
+                nn.LayerNorm(self.hidden_size * 2),
+                nn.GELU()
+            )
+        else:
+            # Original SimpleMLP for raw single cell data
+            self.cond_layer_mlp = SimpleMLP(self.condi_input_size, self.hidden_size, self.hidden_size*2)
+
         # celltype emb
         self.condi_emb = nn.Embedding(classes, hidden_size)
         self.unet = UNet(in_features=hidden_size * 2, out_features=self.st_input_size)
@@ -376,7 +392,13 @@ class DiT_diff(nn.Module):
         x_hat = self.x_in_layer(x_hat)
         # x_hat = pca_with_torch(x_hat, self.pca_dim)
         t = self.time_emb(t)
-        y = self.cond_layer_mlp(y)
+
+        # Use scGPT projection or SimpleMLP based on configuration
+        if self.use_scgpt:
+            y = self.cond_layer_scgpt(y)
+        else:
+            y = self.cond_layer_mlp(y)
+
         # y = self.cond_layer(y)
         # y = self.cond_layer_atten(y)
         # z = self.condi_emb(z)

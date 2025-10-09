@@ -12,6 +12,7 @@ from anndata import AnnData
 from sklearn.preprocessing import maxabs_scale, MaxAbsScaler
 from scipy.spatial.distance import cdist
 from sklearn.neighbors import NearestNeighbors
+import os
 CHUNK_SIZE = 20000
 
 # class ConditionalDiffusionDataset(Dataset):
@@ -50,18 +51,33 @@ CHUNK_SIZE = 20000
 #         return st_sample, sc_sample
 
 class ConditionalDiffusionDataset(Dataset):
-    def __init__(self, sc_path, st_path):
+    def __init__(self, sc_path, st_path, scgpt_embeddings_path=None):
         self.sc_data = sc.read_h5ad(sc_path)
         self.st_data = sc.read_h5ad(st_path)
         self.st_data = self.st_data.to_df().T
-        self.sc_data = self.sc_data.to_df().T
-
+        self.sc_data_df = self.sc_data.to_df().T
 
         self.gene_names = self.st_data.index.tolist()
 
         self.st_sample = torch.tensor(self.st_data.values, dtype=torch.float32)
-        self.sc_sample = torch.tensor(self.sc_data.values, dtype=torch.float32)
-        self.sc_data = torch.tensor(self.sc_data.values, dtype=torch.float32)
+
+        # Load scGPT embeddings or use raw sc data
+        if scgpt_embeddings_path is not None and os.path.exists(scgpt_embeddings_path):
+            print(f"Loading pre-computed scGPT embeddings from: {scgpt_embeddings_path}")
+            scgpt_emb = np.load(scgpt_embeddings_path)
+            # scGPT embeddings are per-cell, shape: (n_cells, embedding_dim)
+            # Transpose to match original format: (n_genes/embedding_dim, n_cells)
+            self.sc_sample = torch.tensor(scgpt_emb.T, dtype=torch.float32)
+            self.sc_data = torch.tensor(scgpt_emb.T, dtype=torch.float32)
+            self.use_scgpt = True
+            print(f"scGPT embeddings shape: {self.sc_sample.shape}")
+        else:
+            if scgpt_embeddings_path is not None:
+                print(f"Warning: scGPT embeddings not found at {scgpt_embeddings_path}")
+                print("Using raw single cell data instead")
+            self.sc_sample = torch.tensor(self.sc_data_df.values, dtype=torch.float32)
+            self.sc_data = torch.tensor(self.sc_data_df.values, dtype=torch.float32)
+            self.use_scgpt = False
 
     def __len__(self):
         return len(self.st_data)
