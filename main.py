@@ -64,6 +64,8 @@ parser.add_argument("--head", type=int, default=16)
 parser.add_argument("--mask_nonzero_ratio", type=float, default=0.3)
 parser.add_argument("--mask_zero_ratio", type=float, default=0.1)
 parser.add_argument("--seed", type=int, default=3407)
+parser.add_argument("--use_scgpt", action='store_true', help='Use pre-computed scGPT embeddings')
+parser.add_argument("--scgpt_embeddings_path", type=str, default=None, help='Path to pre-computed scGPT embeddings')
 args = parser.parse_args()
 
 print(os.getcwd())
@@ -75,6 +77,16 @@ def train_valid_test():
     st_path = 'datasets/' + args.document + '/st/' + args.document + args.st_data
     sc_path = 'datasets/' + args.document + '/sc/' + args.document + args.sc_data
 
+    # Setup scGPT embeddings path if using scGPT
+    scgpt_emb_path = None
+    if args.use_scgpt:
+        if args.scgpt_embeddings_path:
+            scgpt_emb_path = args.scgpt_embeddings_path
+        else:
+            # Default path
+            scgpt_emb_path = f'datasets/{args.document}/scgpt_embeddings/{args.document}_scgpt_embeddings.npy'
+        print(f"Using scGPT embeddings from: {scgpt_emb_path}")
+
     directory = 'save/' + args.document + '_ckpt/' + args.document + '_scdiff'
     # currt_time = datetime.datetime.now().strftime("%Y%m%d")
 
@@ -83,7 +95,7 @@ def train_valid_test():
     # save_path = os.path.join(directory, f'{currt_time}.pt')
     save_path = os.path.join(directory, args.document + '.pt')
 
-    dataset = ConditionalDiffusionDataset(sc_path, st_path)
+    dataset = ConditionalDiffusionDataset(sc_path, st_path, scgpt_embeddings_path=scgpt_emb_path)
     (train_dataset, train_gene_names), (valid_dataset, valid_gene_names), (
     test_dataset, test_gene_names) = split_dataset_with_gene_names(dataset, train_ratio=0.7, val_ratio=0.2,
                                                                    test_ratio=0.1, random_state=42)
@@ -110,7 +122,8 @@ def train_valid_test():
         classes=6,
         mlp_ratio=4.0,
         pca_dim=args.pca_dim,
-        dit_type='dit'
+        dit_type='dit',
+        use_scgpt=args.use_scgpt
     )
 
     model.to(args.device)
