@@ -96,7 +96,9 @@ def get_gene_vocab(adata):
     """
     print("Creating gene vocabulary...")
     gene_names = adata.var_names.tolist()
-    vocab = GeneVocab.from_dict({'gene_names': gene_names})
+    # Create a dictionary mapping each gene name to its index
+    gene_to_idx = {gene: idx for idx, gene in enumerate(gene_names)}
+    vocab = GeneVocab.from_dict(gene_to_idx)
     return vocab
 
 def extract_scgpt_embeddings(model, adata, gene_vocab, device, batch_size):
