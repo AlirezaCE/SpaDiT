@@ -213,11 +213,13 @@ def extract_embeddings(model, adata, vocab, device, batch_size, max_len):
                     tokens_tensor,
                     values_tensor,
                     src_key_padding_mask=src_key_padding_mask,
+                    batch_size=tokens_tensor.shape[0],
                     batch_labels=None,
                     return_np=True
                 )
-            except AttributeError:
+            except (AttributeError, TypeError) as e:
                 # Fallback: use forward pass and extract CLS token
+                print(f"Using fallback method for embedding extraction: {type(e).__name__}")
                 output = model(
                     tokens_tensor,
                     values_tensor,
