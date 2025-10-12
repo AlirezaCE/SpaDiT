@@ -290,7 +290,13 @@ def main():
         binning=51,
         result_binned_key="X_binned",
     )
+    # Preprocessor modifies adata in-place and may return None
     adata_processed = preprocessor(adata, batch_key=None)
+
+    # If preprocessor returns None, use the original adata (it was modified in-place)
+    if adata_processed is None:
+        adata_processed = adata
+        print("Using in-place preprocessed data")
 
     # Setup device
     device = torch.device(args.device if torch.cuda.is_available() else 'cpu')
