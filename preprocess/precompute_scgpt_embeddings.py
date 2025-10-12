@@ -207,32 +207,43 @@ def extract_embeddings(model, adata, vocab, device, batch_size, max_len):
 
         # Get embeddings
         with torch.no_grad():
-            try:
-                # Use encode_batch method if available
-                cell_emb = model.encode_batch(
-                    tokens_tensor,
-                    values_tensor,
-                    src_key_padding_mask=src_key_padding_mask,
-                    batch_size=tokens_tensor.shape[0],
-                    batch_labels=None,
-                    return_np=True
-                )
-            except (AttributeError, TypeError) as e:
-                # Fallback: use forward pass and extract CLS token
-                print(f"Using fallback method for embedding extraction: {type(e).__name__}")
-                output = model(
-                    tokens_tensor,
-                    values_tensor,
-                    src_key_padding_mask=src_key_padding_mask,
-                    batch_labels=None
-                )
-                # Extract CLS token embedding (first token)
-                if isinstance(output, dict) and 'cell_emb' in output:
+            # Use model forward pass to get embeddings
+            output = model(
+                tokens_tensor,
+                values_tensor,
+                src_key_padding_mask=src_key_padding_mask,
+                batch_labels=None,
+                CLS=True,  # Request CLS token
+                CCE=False,
+                MVC=False,
+                ECS=False,
+            )
+
+            # Extract cell embeddings
+            # The output format depends on the model configuration
+            if isinstance(output, dict):
+                if 'cell_emb' in output:
                     cell_emb = output['cell_emb'].cpu().numpy()
-                elif isinstance(output, tuple):
-                    cell_emb = output[0][:, 0, :].cpu().numpy()
+                elif 'cls_output' in output:
+                    cell_emb = output['cls_output'].cpu().numpy()
                 else:
-                    cell_emb = output[:, 0, :].cpu().numpy()
+                    # If dict doesn't have expected keys, use the first value
+                    cell_emb = list(output.values())[0].cpu().numpy()
+                    if len(cell_emb.shape) == 3:  # (batch, seq, emb)
+                        cell_emb = cell_emb[:, 0, :]  # Take CLS token
+            elif isinstance(output, tuple):
+                # Usually first element is the embeddings
+                cell_emb = output[0].cpu().numpy()
+                if len(cell_emb.shape) == 3:  # (batch, seq, emb)
+                    cell_emb = cell_emb[:, 0, :]  # Take CLS token
+            else:
+                cell_emb = output.cpu().numpy()
+                if len(cell_emb.shape) == 3:  # (batch, seq, emb)
+                    cell_emb = cell_emb[:, 0, :]  # Take CLS token
+
+            # Ensure we have 2D array: (batch_size, embedding_dim)
+            if len(cell_emb.shape) != 2:
+                raise ValueError(f"Unexpected embedding shape: {cell_emb.shape}, expected 2D")
 
         embeddings_list.append(cell_emb)
 
