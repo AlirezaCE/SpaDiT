@@ -101,7 +101,8 @@ def normal_train_diff(model,
     for epoch in t_epoch:
         epoch_loss = 0.
         for i, (x, x_hat, x_cond) in enumerate(dataloader): # 去掉了, celltype
-            x, x_hat, x_cond = x.float().to(device), x_hat.float().to(device),x_cond.float().to(device)
+            x, x_hat = x.float().to(device), x_hat.float().to(device)
+            # x_cond is the full dataset, not used for per-batch conditioning
             # celltype = celltype.to(device)
             x, x_nonzero_mask, x_zero_mask = mask_tensor_with_masks(x, mask_zero_ratio, mask_nonzero_ratio)
             x_hat, x_hat_nonzero_mask, x_hat_zero_mask = mask_tensor_with_masks(x_hat, mask_zero_ratio, mask_nonzero_ratio)
@@ -125,7 +126,8 @@ def normal_train_diff(model,
             x_noisy = x_t * x_nonzero_mask + x * (1 - x_nonzero_mask)
             x_hat_noisy = x_hat_t * x_hat_nonzero_mask + x_hat * (1 - x_hat_nonzero_mask)
 
-            noise_pred = model(x_noisy, x_hat_noisy, t=timesteps.to(device), y=x_cond) # 去掉了, z=celltype
+            # Use x_hat (per-sample embeddings) for conditioning, not x_cond (full dataset)
+            noise_pred = model(x_noisy, x_hat_noisy, t=timesteps.to(device), y=x_hat) # 去掉了, z=celltype
             # loss = criterion(noise_pred, noise)
 
             loss = criterion(x_noise * x_nonzero_mask, noise_pred * x_nonzero_mask, x_noise * x_zero_mask,
