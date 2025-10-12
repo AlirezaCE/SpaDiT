@@ -110,12 +110,24 @@ def train_valid_test():
     spot_num = dataset.st_data.shape[1]
     sc_gene_num = dataset.sc_data.shape[0]
     st_gene_num = dataset.st_data.shape[0]
-    # mask_1 = (1 - ((torch.rand(st_gene_num) < args.mask_ratio).int())).to(args.device)
-    # mask_0 = (1 - ((torch.rand(st_gene_num) < args.mask_ratio).int())).to(args.device)
+
+    # When using scGPT, the input dimension is the embedding dimension, not number of cells
+    # condi_input_size should be the feature dimension of each sc sample
+    if args.use_scgpt:
+        # scGPT: sc_data is (embedding_dim, n_cells), so input size per cell is embedding_dim
+        condi_input_size = sc_gene_num  # This is embedding_dim (512) when using scGPT
+    else:
+        # Raw data: sc_data is (n_genes, n_cells), so input size per cell is n_genes
+        condi_input_size = sc_gene_num  # This is n_genes when using raw data
+
+    print(f"Model configuration:")
+    print(f"  ST input size (spots): {spot_num}")
+    print(f"  SC conditioning size: {condi_input_size}")
+    print(f"  Using scGPT: {args.use_scgpt}")
 
     model = DiT_diff(
         st_input_size=spot_num,
-        condi_input_size=cell_num,
+        condi_input_size=condi_input_size,
         hidden_size=args.hidden_size,
         depth=args.depth,
         num_heads=args.head,
