@@ -8,15 +8,17 @@ def model_sample_diff(model, device, dataloader, total_sample, time, is_condi, c
     noise = []
     i = 0
     for _, x_hat, x_cond in dataloader: # 计算整个shape得噪声 一次循环算batch大小  加上了celltype 去掉了, celltype
-        x_hat, x_cond = x_hat.float().to(device), x_cond.float().to(device) # x.float().to(device)
-        t = torch.from_numpy(np.repeat(time, x_cond.shape[0])).long().to(device)
+        x_hat = x_hat.float().to(device)
+        # x_cond is the full dataset, not used for per-batch conditioning
+        t = torch.from_numpy(np.repeat(time, x_hat.shape[0])).long().to(device)
         # celltype = celltype.to(device)
         if not is_condi:
-            n = model(total_sample[i:i+len(x_cond)], t, None) # 一次计算batch大小得噪声
+            n = model(total_sample[i:i+len(x_hat)], t, None) # 一次计算batch大小得噪声
         else:
-            n = model(total_sample[i:i+len(x_cond)], x_hat, t, x_cond, condi_flag=condi_flag) # 加上了celltype 去掉了, celltype
+            # Use x_hat (per-sample embeddings) for conditioning, not x_cond (full dataset)
+            n = model(total_sample[i:i+len(x_hat)], x_hat, t, x_hat, condi_flag=condi_flag) # 加上了celltype 去掉了, celltype
         noise.append(n)
-        i = i+len(x_cond)
+        i = i+len(x_hat)
     noise = torch.cat(noise, dim=0)
     return noise
 
