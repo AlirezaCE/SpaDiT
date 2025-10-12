@@ -66,16 +66,20 @@ class ConditionalDiffusionDataset(Dataset):
             print(f"Loading pre-computed scGPT embeddings from: {scgpt_embeddings_path}")
             scgpt_emb = np.load(scgpt_embeddings_path)
             # scGPT embeddings are per-cell, shape: (n_cells, embedding_dim)
-            # Transpose to match original format: (n_genes/embedding_dim, n_cells)
-            self.sc_sample = torch.tensor(scgpt_emb.T, dtype=torch.float32)
-            self.sc_data = torch.tensor(scgpt_emb.T, dtype=torch.float32)
+            # Keep in (n_cells, embedding_dim) format for indexing
+            # But store full data as transposed for compatibility with model
+            self.sc_sample_raw = torch.tensor(scgpt_emb, dtype=torch.float32)  # (n_cells, emb_dim)
+            self.sc_data = torch.tensor(scgpt_emb.T, dtype=torch.float32)  # (emb_dim, n_cells) for model
             self.use_scgpt = True
-            print(f"scGPT embeddings shape: {self.sc_sample.shape}")
+            print(f"scGPT embeddings shape (per sample): {self.sc_sample_raw.shape}")
+            print(f"scGPT embeddings shape (full data): {self.sc_data.shape}")
         else:
             if scgpt_embeddings_path is not None:
                 print(f"Warning: scGPT embeddings not found at {scgpt_embeddings_path}")
                 print("Using raw single cell data instead")
-            self.sc_sample = torch.tensor(self.sc_data_df.values, dtype=torch.float32)
+            # For raw data: st_sample is (n_genes, n_spots), sc_sample is (n_genes, n_cells)
+            # Both are transposed from the original df
+            self.sc_sample_raw = None
             self.sc_data = torch.tensor(self.sc_data_df.values, dtype=torch.float32)
             self.use_scgpt = False
 
@@ -83,7 +87,18 @@ class ConditionalDiffusionDataset(Dataset):
         return len(self.st_data)
 
     def __getitem__(self, idx):
-        return self.st_sample[idx], self.sc_sample[idx], self.sc_data
+        # For st_sample: indexed along spots dimension (first dim after transpose)
+        st = self.st_sample[idx]
+
+        # For sc_sample:
+        # - If using scGPT: return embedding for corresponding cell
+        # - If using raw: return gene expression for corresponding cell
+        if self.use_scgpt:
+            sc = self.sc_sample_raw[idx]  # (embedding_dim,)
+        else:
+            sc = self.sc_data[:, idx]  # (n_genes,)
+
+        return st, sc, self.sc_data
 
     def get_gene_names(self):
         return self.gene_names
