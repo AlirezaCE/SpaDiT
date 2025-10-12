@@ -16,7 +16,9 @@ class SimpleMLP(nn.Module):
         self.fc3 = nn.Linear(hidden_dim, output_dim)
 
     def forward(self, x):
-        x = x.mean(dim=1)
+        # Handle both 2D (batch_size, features) and 3D (batch_size, n_samples, features) inputs
+        if len(x.shape) == 3:
+            x = x.mean(dim=1)
         x = F.relu(self.fc1(x))
         x = F.relu(self.fc2(x))
         x = self.fc3(x)
