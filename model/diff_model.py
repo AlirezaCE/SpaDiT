@@ -407,8 +407,8 @@ class DiT_diff(nn.Module):
 
         x = self.in_layer(x)
         x = torch.cat([x, x_hat], dim=1)
-        # for blk in self.blks:
-        #     x = blk(x, c)
-        # return self.out_layer(x, c)
-        x = self.unet(x)
-        return x
+        for blk in self.blks:
+            x = blk(x, c)
+        return self.out_layer(x, c)
+        # x = self.unet(x)
+        # return x
