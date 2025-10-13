@@ -7,16 +7,26 @@ from preprocess.utils import mask_tensor_with_masks
 def model_sample_diff(model, device, dataloader, total_sample, time, is_condi, condi_flag):
     noise = []
     i = 0
-    for _, x_hat, x_cond in dataloader: # 计算整个shape得噪声 一次循环算batch大小  加上了celltype 去掉了, celltype
-        x_hat = x_hat.float().to(device)
-        # x_cond is the full dataset, not used for per-batch conditioning
-        t = torch.from_numpy(np.repeat(time, x_hat.shape[0])).long().to(device)
-        # celltype = celltype.to(device)
-        if not is_condi:
-            n = model(total_sample[i:i+len(x_hat)], t, None) # 一次计算batch大小得噪声
+    for _, sc_data in dataloader:
+        sc_data = sc_data.float().to(device)
+
+        # Handle SC data based on shape
+        if len(sc_data.shape) == 3:
+            # Cross-attention mode: sc_data is (batch, n_cells, features)
+            x_hat = sc_data.mean(dim=1)  # (batch, features) for x_hat
+            y = sc_data  # Keep full matrix for cross-attention
         else:
-            # Use x_hat (per-sample embeddings) for conditioning, not x_cond (full dataset)
-            n = model(total_sample[i:i+len(x_hat)], x_hat, t, x_hat, condi_flag=condi_flag) # 加上了celltype 去掉了, celltype
+            # Global mode: sc_data is (batch, features)
+            x_hat = sc_data
+            y = sc_data
+
+        t = torch.from_numpy(np.repeat(time, x_hat.shape[0])).long().to(device)
+
+        if not is_condi:
+            n = model(total_sample[i:i+len(x_hat)], t, None)
+        else:
+            # Pass x_hat for context concatenation, y for conditioning
+            n = model(total_sample[i:i+len(x_hat)], x_hat, t, y, condi_flag=condi_flag)
         noise.append(n)
         i = i+len(x_hat)
     noise = torch.cat(noise, dim=0)

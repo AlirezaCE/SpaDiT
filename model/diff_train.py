@@ -100,12 +100,23 @@ def normal_train_diff(model,
 
     for epoch in t_epoch:
         epoch_loss = 0.
-        for i, (x, x_hat, x_cond) in enumerate(dataloader): # 去掉了, celltype
-            x, x_hat = x.float().to(device), x_hat.float().to(device)
-            # x_cond is the full dataset, not used for per-batch conditioning
-            # celltype = celltype.to(device)
+        for i, (x, sc_data) in enumerate(dataloader):
+            x, sc_data = x.float().to(device), sc_data.float().to(device)
+
+            # Handle SC data based on shape
+            if len(sc_data.shape) == 3:
+                # Cross-attention mode: sc_data is (batch, n_cells, features)
+                # x_hat needs to be 2D for projection, so take mean across cells
+                x_hat = sc_data.mean(dim=1)  # (batch, features)
+                y = sc_data  # Keep full matrix for cross-attention
+            else:
+                # Global mode: sc_data is (batch, features)
+                x_hat = sc_data
+                y = sc_data
+
             x, x_nonzero_mask, x_zero_mask = mask_tensor_with_masks(x, mask_zero_ratio, mask_nonzero_ratio)
-            x_hat, x_hat_nonzero_mask, x_hat_zero_mask = mask_tensor_with_masks(x_hat, mask_zero_ratio, mask_nonzero_ratio)
+            # Don't mask x_hat - it's conditioning data, not the denoising target
+            # x_hat, x_hat_nonzero_mask, x_hat_zero_mask = mask_tensor_with_masks(x_hat, mask_zero_ratio, mask_nonzero_ratio)
 
             x_noise = torch.randn(x.shape).to(device)
             x_hat_noise = torch.randn(x_hat.shape).to(device)
@@ -120,14 +131,14 @@ def normal_train_diff(model,
                                             x_hat_noise,
                                             timesteps=timesteps)
 
-            # mask = torch.tensor(mask).to(device)
-            # mask = (1-((torch.rand(x.shape[1]) < mask_ratio).int())).to(device)
-
+            # Apply masking to ST data
             x_noisy = x_t * x_nonzero_mask + x * (1 - x_nonzero_mask)
-            x_hat_noisy = x_hat_t * x_hat_nonzero_mask + x_hat * (1 - x_hat_nonzero_mask)
 
-            # Use x_hat (per-sample embeddings) for conditioning, not x_cond (full dataset)
-            noise_pred = model(x_noisy, x_hat_noisy, t=timesteps.to(device), y=x_hat) # 去掉了, z=celltype
+            # x_hat gets noise but no masking (it's conditioning context, not denoising target)
+            x_hat_noisy = x_hat_t
+
+            # y is used for conditioning (global mean or full cell matrix for cross-attention)
+            noise_pred = model(x_noisy, x_hat_noisy, t=timesteps.to(device), y=y)
             # loss = criterion(noise_pred, noise)
 
             loss = criterion(x_noise * x_nonzero_mask, noise_pred * x_nonzero_mask, x_noise * x_zero_mask,
