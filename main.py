@@ -66,6 +66,9 @@ parser.add_argument("--mask_zero_ratio", type=float, default=0.1)
 parser.add_argument("--seed", type=int, default=3407)
 parser.add_argument("--use_scgpt", action='store_true', help='Use pre-computed scGPT embeddings')
 parser.add_argument("--scgpt_embeddings_path", type=str, default=None, help='Path to pre-computed scGPT embeddings')
+parser.add_argument("--use_cross_attention", action='store_true', help='Use cross-attention to SC cells (requires dit_type=cross_dit)')
+parser.add_argument("--k_nearest_cells", type=int, default=None, help='Number of SC cells to use for cross-attention (None = all cells)')
+parser.add_argument("--dit_type", type=str, default='dit', choices=['dit', 'cross_dit'], help='DiT block type')
 args = parser.parse_args()
 
 print(os.getcwd())
@@ -95,7 +98,18 @@ def train_valid_test():
     # save_path = os.path.join(directory, f'{currt_time}.pt')
     save_path = os.path.join(directory, args.document + '.pt')
 
-    dataset = ConditionalDiffusionDataset(sc_path, st_path, scgpt_embeddings_path=scgpt_emb_path)
+    # Validate arguments
+    if args.use_cross_attention and args.dit_type != 'cross_dit':
+        print("Warning: use_cross_attention=True requires dit_type='cross_dit'. Setting dit_type='cross_dit'")
+        args.dit_type = 'cross_dit'
+
+    dataset = ConditionalDiffusionDataset(
+        sc_path,
+        st_path,
+        scgpt_embeddings_path=scgpt_emb_path,
+        use_cross_attention=args.use_cross_attention,
+        k_nearest_cells=args.k_nearest_cells
+    )
     (train_dataset, train_gene_names), (valid_dataset, valid_gene_names), (
     test_dataset, test_gene_names) = split_dataset_with_gene_names(dataset, train_ratio=0.7, val_ratio=0.2,
                                                                    test_ratio=0.1, random_state=42)
@@ -106,24 +120,24 @@ def train_valid_test():
     valid_dataloader = DataLoader(valid_dataset, batch_size=args.batch_size, shuffle=True)
     test_dataloader = DataLoader(test_dataset, batch_size=args.batch_size, shuffle=False)
 
-    cell_num = dataset.sc_data.shape[1]
-    spot_num = dataset.st_data.shape[1]
-    sc_gene_num = dataset.sc_data.shape[0]
-    st_gene_num = dataset.st_data.shape[0]
-
-    # When using scGPT, the input dimension is the embedding dimension, not number of cells
-    # condi_input_size should be the feature dimension of each sc sample
-    if args.use_scgpt:
-        # scGPT: sc_data is (embedding_dim, n_cells), so input size per cell is embedding_dim
-        condi_input_size = sc_gene_num  # This is embedding_dim (512) when using scGPT
+    # Get dimensions
+    # dataset.sc_all_cells: (n_cells, cell_features)
+    if args.use_cross_attention:
+        n_cells, cell_features = dataset.sc_all_cells.shape
+        condi_input_size = cell_features  # Feature dimension per cell
+        print(f"Cross-attention mode: {n_cells} cells, {cell_features} features per cell")
     else:
-        # Raw data: sc_data is (n_genes, n_cells), so input size per cell is n_genes
-        condi_input_size = sc_gene_num  # This is n_genes when using raw data
+        condi_input_size = dataset.sc_global.shape[0]  # Feature dimension of global mean
+        print(f"Global conditioning mode: {condi_input_size} features")
+
+    spot_num = dataset.st_sample.shape[1]  # Number of genes/features in ST data
 
     print(f"Model configuration:")
-    print(f"  ST input size (spots): {spot_num}")
+    print(f"  ST input size: {spot_num}")
     print(f"  SC conditioning size: {condi_input_size}")
     print(f"  Using scGPT: {args.use_scgpt}")
+    print(f"  DiT type: {args.dit_type}")
+    print(f"  Use cross-attention: {args.use_cross_attention}")
 
     model = DiT_diff(
         st_input_size=spot_num,
@@ -134,7 +148,7 @@ def train_valid_test():
         classes=6,
         mlp_ratio=4.0,
         pca_dim=args.pca_dim,
-        dit_type='dit',
+        dit_type=args.dit_type,
         use_scgpt=args.use_scgpt
     )
 
@@ -181,8 +195,8 @@ def train_valid_test():
     #                          )
 
     with torch.no_grad():
-       test_gt = torch.stack([data for data, t, _ in test_dataset])
-       test_sc = torch.stack([t for data, t, _ in test_dataset])
+       test_gt = torch.stack([data for data, t in test_dataset])
+       test_sc = torch.stack([t for data, t in test_dataset])
        # test_gt = torch.randn(len(test_dataset), 249)
        prediction = sample_diff(model,
                                 device=args.device,

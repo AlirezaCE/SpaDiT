@@ -95,7 +95,7 @@ class CrossAttention(nn.Module):
             1, 2, 0, 3)  # make torchscript happy (cannot use tensor as tuple)
         q, k, v = qkv.unbind(0)
 
-        attn = (q @ k.transpose(-2, -1)) * self.scalee
+        attn = (q @ k.transpose(-2, -1)) * self.scale
         attn = attn.softmax(dim=-1)
         attn = self.attn_drop(attn)
 
@@ -158,7 +158,12 @@ class TimestepEmbedder(nn.Module):
 
 
 class CrossDiTblock(nn.Module):
-    # adaBN -> attn -> mlp
+    """
+    Cross-attention DiT block with timestep conditioning
+    - Self-attention among ST spots
+    - Cross-attention to SC cells
+    - Timestep modulation via AdaLN
+    """
     def __init__(self,
                  feature_dim=2000,
                  mlp_ratio=4.0,
@@ -166,26 +171,62 @@ class CrossDiTblock(nn.Module):
                  **kwargs) -> None:
         super().__init__()
 
-        self.norm1 = nn.LayerNorm(num_features=feature_dim, elementwise_affine=False, eps=1e-4)
+        self.norm1 = nn.LayerNorm(feature_dim, elementwise_affine=False, eps=1e-4)
         self.attn = Attention2(feature_dim, num_heads=num_heads, qkv_bias=True, **kwargs)
 
-        self.norm2 = nn.LayerNorm(num_features=feature_dim, elementwise_affine=False, eps=1e-4)
+        self.norm2 = nn.LayerNorm(feature_dim, elementwise_affine=False, eps=1e-4)
         self.cross_attn = CrossAttention(feature_dim, num_heads=num_heads, qkv_bias=True, **kwargs)
 
-        self.norm3 = nn.LayerNorm(num_features=feature_dim, elementwise_affine=False, eps=1e-4)
+        self.norm3 = nn.LayerNorm(feature_dim, elementwise_affine=False, eps=1e-4)
         approx_gelu = lambda: nn.GELU(approximate="tanh")
 
         mlp_hidden_dim = int(feature_dim * mlp_ratio)
         self.mlp = Mlp(in_features=feature_dim, hidden_features=mlp_hidden_dim, act_layer=approx_gelu, drop=0)
 
-    def forward(self, x, c):
-        # 将 condition 投影到 6 * hiddensize 之后沿列切成 6 份
+        # Add timestep modulation (like DiTblock)
+        self.adaLN_modulation = nn.Sequential(
+            nn.SiLU(),
+            nn.Linear(feature_dim, 6 * feature_dim, bias=True)
+        )
 
-        # attention blk
-        x = x + self.attn(self.norm1(x))
-        x = x + self.cross_attn(self.norm2(x), c, c)
-        # mlp blk 采用 ViT 中实现的版本
-        x = x + self.mlp(self.norm3(x))
+    def forward(self, x, c, sc_context=None):
+        """
+        Args:
+            x: ST spot features (batch_size, feature_dim)
+            c: Timestep embedding (batch_size, feature_dim)
+            sc_context: SC cell features for cross-attention (batch_size, n_cells, feature_dim) or None
+        """
+        # Extract timestep modulation parameters
+        shift_msa, scale_msa, gate_msa, shift_mlp, scale_mlp, gate_mlp = self.adaLN_modulation(c).chunk(6, dim=1)
+
+        # Self-attention among ST spots with timestep modulation
+        x = x + gate_msa * self.attn(modulate(self.norm1(x), shift_msa, scale_msa))
+
+        # Cross-attention to SC cells if provided
+        if sc_context is not None:
+            # sc_context: (batch_size, n_cells, feature_dim)
+            # Need to apply cross-attention for each sample in batch
+            # CrossAttention expects: x (C, G), k (C, G), v (C, G)
+            # But we have: x (batch, feature_dim), sc_context (batch, n_cells, feature_dim)
+
+            # For batch processing, we need to handle this carefully
+            # Option: apply cross-attention per-sample
+            batch_size = x.shape[0]
+            cross_attn_output = []
+            for i in range(batch_size):
+                # x[i]: (feature_dim,), sc_context[i]: (n_cells, feature_dim)
+                x_i = x[i].unsqueeze(0)  # (1, feature_dim)
+                sc_i = sc_context[i]  # (n_cells, feature_dim)
+
+                # CrossAttention expects (C, G) format
+                out_i = self.cross_attn(x_i.T, sc_i.T, sc_i.T).T  # (1, feature_dim)
+                cross_attn_output.append(out_i)
+
+            cross_attn_output = torch.cat(cross_attn_output, dim=0)  # (batch, feature_dim)
+            x = x + cross_attn_output
+
+        # MLP with timestep modulation
+        x = x + gate_mlp * self.mlp(modulate(self.norm3(x), shift_mlp, scale_mlp))
         return x
 
 
@@ -324,18 +365,24 @@ class DiT_diff(nn.Module):
 
         self.cond_layer_atten= SelfAttention2(self.condi_input_size, self.hidden_size)
 
-        # Use scGPT embeddings or SimpleMLP for GLOBAL conditioning
-        if use_scgpt:
-            # For global scGPT embeddings (mean-pooled across all cells)
-            # Project to hidden_size*2 for conditioning
-            self.cond_layer_scgpt = nn.Sequential(
+        # SC cell projection layer for cross-attention
+        # Projects each SC cell from condi_input_size to hidden_size*2
+        if dit_type == 'cross_dit':
+            self.sc_proj = nn.Sequential(
                 nn.Linear(self.condi_input_size, self.hidden_size * 2),
                 nn.LayerNorm(self.hidden_size * 2),
                 nn.GELU()
             )
         else:
-            # SimpleMLP for global raw single cell data (mean-pooled across all cells)
-            self.cond_layer_mlp = SimpleMLP(self.condi_input_size, self.hidden_size, self.hidden_size*2)
+            # For non-cross-attention: use global mean conditioning
+            if use_scgpt:
+                self.cond_layer_scgpt = nn.Sequential(
+                    nn.Linear(self.condi_input_size, self.hidden_size * 2),
+                    nn.LayerNorm(self.hidden_size * 2),
+                    nn.GELU()
+                )
+            else:
+                self.cond_layer_mlp = SimpleMLP(self.condi_input_size, self.hidden_size, self.hidden_size*2)
 
         # celltype emb
         self.condi_emb = nn.Embedding(classes, hidden_size)
@@ -374,7 +421,7 @@ class DiT_diff(nn.Module):
         nn.init.normal_(self.time_emb.mlp[2].weight, std=0.02)
 
         # Zero-out adaLN modulation layers in DiT blocks:
-        if self.dit_type == 'dit':
+        if self.dit_type in ['dit', 'cross_dit']:
             for block in self.blks:
                 # adaLN_modulation 其实是个 linear, 即将所有的 adaLN 进行 0 初始化？
                 nn.init.constant_(block.adaLN_modulation[-1].weight, 0)
@@ -389,36 +436,52 @@ class DiT_diff(nn.Module):
 
     def forward(self, x, x_hat, t, y, **kwargs):
         """
-        Forward pass with global conditioning from single-cell data
+        Forward pass with single-cell conditioning
 
         Args:
             x: Noisy ST data (batch_size, st_input_size)
             x_hat: Additional ST input (batch_size, condi_input_size)
             t: Timestep (batch_size,)
-            y: Global SC condition - same for all samples in batch (batch_size, condi_input_size)
+            y: SC condition
+               - For cross_dit: (batch_size, n_cells, condi_input_size) - full SC matrix
+               - For dit: (batch_size, condi_input_size) - global mean
         """
         x = x.float()
         x_hat = x_hat.float()
         x_hat = self.x_in_layer(x_hat)
-        # x_hat = pca_with_torch(x_hat, self.pca_dim)
         t = self.time_emb(t)
 
-        # Process global condition: scGPT or raw SC embeddings (mean-pooled across all cells)
-        if self.use_scgpt:
-            y = self.cond_layer_scgpt(y)
-        else:
-            y = self.cond_layer_mlp(y)
+        # Process SC conditioning based on model type
+        if self.dit_type == 'cross_dit':
+            # y shape: (batch_size, n_cells, condi_input_size)
+            # Project each cell to hidden space
+            batch_size, n_cells, cell_features = y.shape
+            y_flat = y.reshape(batch_size * n_cells, cell_features)  # (batch*n_cells, features)
+            sc_proj = self.sc_proj(y_flat)  # (batch*n_cells, hidden*2)
+            sc_context = sc_proj.reshape(batch_size, n_cells, self.hidden_size * 2)  # (batch, n_cells, hidden*2)
 
-        # y = self.cond_layer(y)
-        # y = self.cond_layer_atten(y)
-        # z = self.condi_emb(z)
-        c = t + y  # Combine time and global SC condition
-        # c = t
+            # Timestep only for modulation
+            c = t
+        else:
+            # Global conditioning (y is already mean across cells)
+            # y shape: (batch_size, condi_input_size)
+            if self.use_scgpt:
+                y = self.cond_layer_scgpt(y)
+            else:
+                y = self.cond_layer_mlp(y)
+
+            c = t  # Just timestep (SC global mean didn't help)
+            # c = t + y  # Uncomment to add SC global conditioning
+            sc_context = None
 
         x = self.in_layer(x)
         x = torch.cat([x, x_hat], dim=1)
+
+        # Pass through blocks
         for blk in self.blks:
-            x = blk(x, c)
+            if self.dit_type == 'cross_dit':
+                x = blk(x, c, sc_context)  # CrossDiTblock: pass SC context
+            else:
+                x = blk(x, c)  # DiTblock: standard forward
+
         return self.out_layer(x, c)
-        # x = self.unet(x)
-        # return x

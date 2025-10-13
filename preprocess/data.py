@@ -51,13 +51,23 @@ CHUNK_SIZE = 20000
 #         return st_sample, sc_sample
 
 class ConditionalDiffusionDataset(Dataset):
-    def __init__(self, sc_path, st_path, scgpt_embeddings_path=None):
+    def __init__(self, sc_path, st_path, scgpt_embeddings_path=None, use_cross_attention=False, k_nearest_cells=None):
+        """
+        Args:
+            sc_path: Path to single-cell h5ad file
+            st_path: Path to spatial transcriptomics h5ad file
+            scgpt_embeddings_path: Optional path to pre-computed scGPT embeddings
+            use_cross_attention: If True, returns full SC matrix for cross-attention
+            k_nearest_cells: If set, returns only K nearest cells (to reduce memory). None = use all cells
+        """
         self.sc_data = sc.read_h5ad(sc_path)
         self.st_data = sc.read_h5ad(st_path)
         self.st_data = self.st_data.to_df().T
         self.sc_data_df = self.sc_data.to_df().T
 
         self.gene_names = self.st_data.index.tolist()
+        self.use_cross_attention = use_cross_attention
+        self.k_nearest_cells = k_nearest_cells
 
         self.st_sample = torch.tensor(self.st_data.values, dtype=torch.float32)
 
@@ -67,40 +77,58 @@ class ConditionalDiffusionDataset(Dataset):
             scgpt_emb = np.load(scgpt_embeddings_path)
             # scGPT embeddings are per-cell, shape: (n_cells, embedding_dim)
 
-            # Compute GLOBAL condition: mean pooling over all cells
-            self.sc_global = torch.tensor(scgpt_emb.mean(axis=0), dtype=torch.float32)  # (embedding_dim,)
-            print(f"Using scGPT as GLOBAL condition")
-            print(f"Global scGPT embedding shape: {self.sc_global.shape}")
-            print(f"Original scGPT embeddings: {scgpt_emb.shape[0]} cells, {scgpt_emb.shape[1]} dims")
+            # Store full SC data: (n_cells, embedding_dim)
+            self.sc_all_cells = torch.tensor(scgpt_emb, dtype=torch.float32)
 
-            # Store full data for potential future use
-            self.sc_data = torch.tensor(scgpt_emb.T, dtype=torch.float32)  # (emb_dim, n_cells)
+            # Also compute global mean for backward compatibility
+            self.sc_global = torch.tensor(scgpt_emb.mean(axis=0), dtype=torch.float32)  # (embedding_dim,)
+
             self.use_scgpt = True
+            print(f"scGPT embeddings loaded: {scgpt_emb.shape[0]} cells, {scgpt_emb.shape[1]} dims")
+            if use_cross_attention:
+                print(f"Using CROSS-ATTENTION with all SC cells")
+            else:
+                print(f"Using GLOBAL condition (mean pooling)")
         else:
             if scgpt_embeddings_path is not None:
                 print(f"Warning: scGPT embeddings not found at {scgpt_embeddings_path}")
                 print("Using raw single cell data instead")
 
-            # For raw data: compute global mean across all cells
+            # For raw data: (n_cells, n_genes)
             sc_data_array = self.sc_data_df.values  # (n_genes, n_cells)
-            self.sc_global = torch.tensor(sc_data_array.mean(axis=1), dtype=torch.float32)  # (n_genes,)
-            print(f"Using raw SC data as GLOBAL condition")
-            print(f"Global SC embedding shape: {self.sc_global.shape}")
+            self.sc_all_cells = torch.tensor(sc_data_array.T, dtype=torch.float32)  # (n_cells, n_genes)
 
-            self.sc_data = torch.tensor(sc_data_array, dtype=torch.float32)
+            # Global mean
+            self.sc_global = torch.tensor(sc_data_array.mean(axis=1), dtype=torch.float32)  # (n_genes,)
+
             self.use_scgpt = False
+            print(f"Raw SC data loaded: {self.sc_all_cells.shape[0]} cells, {self.sc_all_cells.shape[1]} genes")
+            if use_cross_attention:
+                print(f"Using CROSS-ATTENTION with all SC cells")
+            else:
+                print(f"Using GLOBAL condition (mean pooling)")
+
+        # For cross-attention, optionally subsample cells
+        if use_cross_attention and k_nearest_cells is not None and k_nearest_cells < self.sc_all_cells.shape[0]:
+            print(f"Subsampling to {k_nearest_cells} random cells (from {self.sc_all_cells.shape[0]})")
+            indices = torch.randperm(self.sc_all_cells.shape[0])[:k_nearest_cells]
+            self.sc_all_cells = self.sc_all_cells[indices]
 
     def __len__(self):
         return len(self.st_data)
 
     def __getitem__(self, idx):
-        # For st_sample: indexed along spots dimension (first dim after transpose)
+        # ST spot
         st = self.st_sample[idx]
 
-        # Return the SAME global condition for ALL ST spots
-        sc = self.sc_global  # Same for all indices
+        if self.use_cross_attention:
+            # Return full SC matrix for cross-attention: (n_cells, features)
+            sc = self.sc_all_cells
+        else:
+            # Return global mean for simple conditioning
+            sc = self.sc_global
 
-        return st, sc, self.sc_data
+        return st, sc
 
     def get_gene_names(self):
         return self.gene_names
