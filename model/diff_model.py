@@ -395,6 +395,12 @@ class DiT_diff(nn.Module):
                 nn.LayerNorm(self.hidden_size * 2),
                 nn.GELU()
             )
+            # Also add global SC projection for timestep conditioning
+            self.sc_global_proj = nn.Sequential(
+                nn.Linear(self.condi_input_size, self.hidden_size * 2),
+                nn.LayerNorm(self.hidden_size * 2),
+                nn.GELU()
+            )
         else:
             # For non-cross-attention: use global mean conditioning
             if use_scgpt:
@@ -476,14 +482,18 @@ class DiT_diff(nn.Module):
         # Process SC conditioning based on model type
         if self.dit_type == 'cross_dit':
             # y shape: (batch_size, n_cells, condi_input_size)
-            # Project each cell to hidden space
+            # Project each cell to hidden space for cross-attention
             batch_size, n_cells, cell_features = y.shape
             y_flat = y.reshape(batch_size * n_cells, cell_features)  # (batch*n_cells, features)
             sc_proj = self.sc_proj(y_flat)  # (batch*n_cells, hidden*2)
             sc_context = sc_proj.reshape(batch_size, n_cells, self.hidden_size * 2)  # (batch, n_cells, hidden*2)
 
-            # Timestep only for modulation
-            c = t
+            # Also compute global SC representation for timestep conditioning
+            y_global = y.mean(dim=1)  # (batch, condi_input_size)
+            y_global_emb = self.sc_global_proj(y_global)  # (batch, hidden*2)
+
+            # Combine timestep and global SC conditioning
+            c = t + y_global_emb
         else:
             # Global conditioning (y is already mean across cells)
             # y shape: (batch_size, condi_input_size)
@@ -492,8 +502,8 @@ class DiT_diff(nn.Module):
             else:
                 y = self.cond_layer_mlp(y)
 
-            c = t  # Just timestep (SC global mean didn't help)
-            # c = t + y  # Uncomment to add SC global conditioning
+            # Enable SC global conditioning
+            c = t + y
             sc_context = None
 
         x = self.in_layer(x)
