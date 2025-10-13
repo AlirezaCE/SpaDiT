@@ -16,9 +16,8 @@ class SimpleMLP(nn.Module):
         self.fc3 = nn.Linear(hidden_dim, output_dim)
 
     def forward(self, x):
-        # Handle both 2D (batch_size, features) and 3D (batch_size, n_samples, features) inputs
-        if len(x.shape) == 3:
-            x = x.mean(dim=1)
+        # Expects 2D input: (batch_size, features)
+        # For global conditioning, features represent aggregated SC embeddings
         x = F.relu(self.fc1(x))
         x = F.relu(self.fc2(x))
         x = self.fc3(x)
@@ -325,17 +324,17 @@ class DiT_diff(nn.Module):
 
         self.cond_layer_atten= SelfAttention2(self.condi_input_size, self.hidden_size)
 
-        # Use scGPT embeddings or SimpleMLP
+        # Use scGPT embeddings or SimpleMLP for GLOBAL conditioning
         if use_scgpt:
-            # For scGPT embeddings, we just project them to hidden_size*2
-            # No need to process raw gene expression
+            # For global scGPT embeddings (mean-pooled across all cells)
+            # Project to hidden_size*2 for conditioning
             self.cond_layer_scgpt = nn.Sequential(
                 nn.Linear(self.condi_input_size, self.hidden_size * 2),
                 nn.LayerNorm(self.hidden_size * 2),
                 nn.GELU()
             )
         else:
-            # Original SimpleMLP for raw single cell data
+            # SimpleMLP for global raw single cell data (mean-pooled across all cells)
             self.cond_layer_mlp = SimpleMLP(self.condi_input_size, self.hidden_size, self.hidden_size*2)
 
         # celltype emb
@@ -389,13 +388,22 @@ class DiT_diff(nn.Module):
         nn.init.constant_(self.out_layer.linear.bias, 0)
 
     def forward(self, x, x_hat, t, y, **kwargs):
+        """
+        Forward pass with global conditioning from single-cell data
+
+        Args:
+            x: Noisy ST data (batch_size, st_input_size)
+            x_hat: Additional ST input (batch_size, condi_input_size)
+            t: Timestep (batch_size,)
+            y: Global SC condition - same for all samples in batch (batch_size, condi_input_size)
+        """
         x = x.float()
         x_hat = x_hat.float()
         x_hat = self.x_in_layer(x_hat)
         # x_hat = pca_with_torch(x_hat, self.pca_dim)
         t = self.time_emb(t)
 
-        # Use scGPT projection or SimpleMLP based on configuration
+        # Process global condition: scGPT or raw SC embeddings (mean-pooled across all cells)
         if self.use_scgpt:
             y = self.cond_layer_scgpt(y)
         else:
@@ -404,7 +412,7 @@ class DiT_diff(nn.Module):
         # y = self.cond_layer(y)
         # y = self.cond_layer_atten(y)
         # z = self.condi_emb(z)
-        c = t + y
+        c = t + y  # Combine time and global SC condition
         # c = t
 
         x = self.in_layer(x)

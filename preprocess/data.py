@@ -66,21 +66,28 @@ class ConditionalDiffusionDataset(Dataset):
             print(f"Loading pre-computed scGPT embeddings from: {scgpt_embeddings_path}")
             scgpt_emb = np.load(scgpt_embeddings_path)
             # scGPT embeddings are per-cell, shape: (n_cells, embedding_dim)
-            # Keep in (n_cells, embedding_dim) format for indexing
-            # But store full data as transposed for compatibility with model
-            self.sc_sample_raw = torch.tensor(scgpt_emb, dtype=torch.float32)  # (n_cells, emb_dim)
-            self.sc_data = torch.tensor(scgpt_emb.T, dtype=torch.float32)  # (emb_dim, n_cells) for model
+
+            # Compute GLOBAL condition: mean pooling over all cells
+            self.sc_global = torch.tensor(scgpt_emb.mean(axis=0), dtype=torch.float32)  # (embedding_dim,)
+            print(f"Using scGPT as GLOBAL condition")
+            print(f"Global scGPT embedding shape: {self.sc_global.shape}")
+            print(f"Original scGPT embeddings: {scgpt_emb.shape[0]} cells, {scgpt_emb.shape[1]} dims")
+
+            # Store full data for potential future use
+            self.sc_data = torch.tensor(scgpt_emb.T, dtype=torch.float32)  # (emb_dim, n_cells)
             self.use_scgpt = True
-            print(f"scGPT embeddings shape (per sample): {self.sc_sample_raw.shape}")
-            print(f"scGPT embeddings shape (full data): {self.sc_data.shape}")
         else:
             if scgpt_embeddings_path is not None:
                 print(f"Warning: scGPT embeddings not found at {scgpt_embeddings_path}")
                 print("Using raw single cell data instead")
-            # For raw data: st_sample is (n_genes, n_spots), sc_sample is (n_genes, n_cells)
-            # Both are transposed from the original df
-            self.sc_sample_raw = None
-            self.sc_data = torch.tensor(self.sc_data_df.values, dtype=torch.float32)
+
+            # For raw data: compute global mean across all cells
+            sc_data_array = self.sc_data_df.values  # (n_genes, n_cells)
+            self.sc_global = torch.tensor(sc_data_array.mean(axis=1), dtype=torch.float32)  # (n_genes,)
+            print(f"Using raw SC data as GLOBAL condition")
+            print(f"Global SC embedding shape: {self.sc_global.shape}")
+
+            self.sc_data = torch.tensor(sc_data_array, dtype=torch.float32)
             self.use_scgpt = False
 
     def __len__(self):
@@ -90,13 +97,8 @@ class ConditionalDiffusionDataset(Dataset):
         # For st_sample: indexed along spots dimension (first dim after transpose)
         st = self.st_sample[idx]
 
-        # For sc_sample:
-        # - If using scGPT: return embedding for corresponding cell
-        # - If using raw: return gene expression for corresponding cell
-        if self.use_scgpt:
-            sc = self.sc_sample_raw[idx]  # (embedding_dim,)
-        else:
-            sc = self.sc_data[:, idx]  # (n_genes,)
+        # Return the SAME global condition for ALL ST spots
+        sc = self.sc_global  # Same for all indices
 
         return st, sc, self.sc_data
 
