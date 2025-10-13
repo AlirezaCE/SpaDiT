@@ -89,20 +89,43 @@ class CrossAttention(nn.Module):
         self.proj_drop = nn.Dropout(proj_drop)
 
     def forward(self, x, k, v):
-        C, G = x.shape
-        qkv = torch.concat((self.q_proj(x), self.k_proj(k), self.v_proj(v)), dim=-1).reshape(C, 3, self.num_heads,
-                                                                                             G // self.num_heads).permute(
-            1, 2, 0, 3)  # make torchscript happy (cannot use tensor as tuple)
-        q, k, v = qkv.unbind(0)
+        """
+        Cross-attention forward pass
+        Args:
+            x: Query tensor (seq_len_q, dim)
+            k: Key tensor (seq_len_kv, dim)
+            v: Value tensor (seq_len_kv, dim)
+        """
+        seq_len_q, dim = x.shape
+        seq_len_kv, _ = k.shape
 
+        # Project queries, keys, values
+        q = self.q_proj(x)  # (seq_len_q, dim)
+        k = self.k_proj(k)  # (seq_len_kv, dim)
+        v = self.v_proj(v)  # (seq_len_kv, dim)
+
+        # Reshape for multi-head attention: (seq_len, dim) -> (num_heads, seq_len, head_dim)
+        q = q.reshape(seq_len_q, self.num_heads, dim // self.num_heads).permute(1, 0, 2)
+        k = k.reshape(seq_len_kv, self.num_heads, dim // self.num_heads).permute(1, 0, 2)
+        v = v.reshape(seq_len_kv, self.num_heads, dim // self.num_heads).permute(1, 0, 2)
+
+        # Compute attention: (num_heads, seq_len_q, head_dim) @ (num_heads, head_dim, seq_len_kv)
+        # -> (num_heads, seq_len_q, seq_len_kv)
         attn = (q @ k.transpose(-2, -1)) * self.scale
         attn = attn.softmax(dim=-1)
         attn = self.attn_drop(attn)
 
-        x = (attn @ v).transpose(1, 2).reshape(C, G)
-        x = self.proj(x)
-        x = self.proj_drop(x)
-        return x
+        # Apply attention to values: (num_heads, seq_len_q, seq_len_kv) @ (num_heads, seq_len_kv, head_dim)
+        # -> (num_heads, seq_len_q, head_dim)
+        out = attn @ v
+
+        # Reshape back: (num_heads, seq_len_q, head_dim) -> (seq_len_q, dim)
+        out = out.permute(1, 0, 2).reshape(seq_len_q, dim)
+
+        # Final projection
+        out = self.proj(out)
+        out = self.proj_drop(out)
+        return out
 
 
 def modulate(x, shift, scale):
@@ -205,21 +228,20 @@ class CrossDiTblock(nn.Module):
         # Cross-attention to SC cells if provided
         if sc_context is not None:
             # sc_context: (batch_size, n_cells, feature_dim)
-            # Need to apply cross-attention for each sample in batch
-            # CrossAttention expects: x (C, G), k (C, G), v (C, G)
-            # But we have: x (batch, feature_dim), sc_context (batch, n_cells, feature_dim)
+            # CrossAttention expects: x (seq_len, feature_dim), k/v (seq_len, feature_dim)
+            # For each sample: x is (1, feature_dim), k/v are (n_cells, feature_dim)
 
-            # For batch processing, we need to handle this carefully
-            # Option: apply cross-attention per-sample
             batch_size = x.shape[0]
             cross_attn_output = []
             for i in range(batch_size):
-                # x[i]: (feature_dim,), sc_context[i]: (n_cells, feature_dim)
-                x_i = x[i].unsqueeze(0)  # (1, feature_dim)
-                sc_i = sc_context[i]  # (n_cells, feature_dim)
+                # x[i]: (feature_dim,)
+                x_i = x[i].unsqueeze(0)  # (1, feature_dim) - query from ST spot
+                sc_i = sc_context[i]  # (n_cells, feature_dim) - keys/values from SC cells
 
-                # CrossAttention expects (C, G) format
-                out_i = self.cross_attn(x_i.T, sc_i.T, sc_i.T).T  # (1, feature_dim)
+                # CrossAttention expects (C, G) where C=sequence_length, G=feature_dim
+                # x_i: (1, feature_dim) - 1 query (the ST spot)
+                # sc_i: (n_cells, feature_dim) - n_cells keys/values (SC cells)
+                out_i = self.cross_attn(x_i, sc_i, sc_i)  # Output: (1, feature_dim)
                 cross_attn_output.append(out_i)
 
             cross_attn_output = torch.cat(cross_attn_output, dim=0)  # (batch, feature_dim)
