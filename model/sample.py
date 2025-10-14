@@ -95,9 +95,9 @@ def sample_diff(model,
         epoch_rmse = calculate_rmse_per_gene(x_t, gt)
         ts.set_postfix_str(f'PCC:{epoch_pcc:.5f}, RMSE:'
                            f'{epoch_rmse:.5f}')
-        # REMOVED: Ground truth injection - model should denoise without seeing GT
-        # if mask is not None:
-        #     x_t = x_t *  mask + (1 - mask) * gt
+
+        if mask is not None:
+            x_t = x_t *  mask + (1 - mask) * gt
 
         if time == 0 and model_pred_type == 'x_start':
             # 如果直接预测 x_0 的话，最后一步直接输出

@@ -202,7 +202,7 @@ def train_valid_test():
                                 device=args.device,
                                 dataloader=test_dataloader,
                                 noise_scheduler=noise_scheduler,
-                                mask_nonzero_ratio=0,  # Changed from 0.3 to 0 for full reconstruction
+                                mask_nonzero_ratio=0.1,  # Changed from 0.3 to 0 for full reconstruction
                                 mask_zero_ratio = 0,
                                 gt=test_gt,
                                 sc=test_sc,
