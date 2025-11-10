@@ -7,7 +7,6 @@ from timm.models.vision_transformer import PatchEmbed, Attention, Mlp
 import sys
 import torch.nn.functional as F
 from preprocess.utils import pca_with_torch
-from model.scgpt_embedder import scGPTConditionEmbedder, scGPTConditionEmbedderSimple
 
 class SimpleMLP(nn.Module):
     def __init__(self, input_dim, hidden_dim, output_dim):

@@ -1,0 +1,62 @@
+================================================================================
+                    scGPT INTEGRATION - QUICK SUMMARY
+================================================================================
+
+WHAT WAS DONE:
+--------------
+1. Created scGPT embedder wrapper (model/scgpt_embedder.py)
+2. Updated DiT model to use scGPT embeddings (model/diff_model_scgpt.py)
+3. Created test script (test_scgpt_integration.py)
+4. Documentation (SCGPT_INTEGRATION_README.md, RUN_ON_SERVER.md)
+
+KEY CHANGE:
+-----------
+BEFORE: self.condi_emb = nn.Embedding(classes, hidden_size)
+        Simple lookup table for condition embeddings
+
+AFTER:  self.scgpt_embedder = scGPTConditionEmbedder(...)
+        Pretrained transformer (13.2M brain cells) for rich biological embeddings
+
+FILES TO UPLOAD TO SERVER:
+--------------------------
+✓ model/scgpt_embedder.py
+✓ model/diff_model_scgpt.py  
+✓ test_scgpt_integration.py
+✓ RUN_ON_SERVER.md
+✓ scgpt_models/scGPT_brain/ (args.json, best_model.pt, vocab.json)
+
+COMMAND TO RUN ON SERVER:
+-------------------------
+>>> python test_scgpt_integration.py
+
+Then send me the output!
+
+WHAT THE TEST DOES:
+-------------------
+[1] Loads scGPT brain model
+[2] Tests embedder with dummy data
+[3] Initializes DiT with scGPT
+[4] Runs full forward pass
+[5] Compares with baseline
+
+EXPECTED BENEFITS:
+------------------
+✓ Richer biological embeddings from 13.2M pretrained brain cells
+✓ Better capture of cell-type and state information
+✓ More accurate spatial transcriptomics imputation
+✓ Leverages foundation model knowledge
+
+PARAMETERS ADDED:
+-----------------
+use_scgpt=True                              # Enable scGPT embedder
+scgpt_model_dir='scgpt_models/scGPT_brain' # Path to pretrained model
+freeze_scgpt=True                           # Keep scGPT weights frozen
+device='cuda:0'                             # Device for scGPT
+
+BACKWARD COMPATIBLE:
+--------------------
+Set use_scgpt=False to use original SimpleMLP embedding
+
+================================================================================
+                      NEXT STEP: RUN TEST ON SERVER!
+================================================================================
