@@ -73,6 +73,9 @@ class scGPTConditionEmbedder(nn.Module):
         model_file = self.model_dir / "best_model.pt"
         self._load_pretrained_weights(model_file)
 
+        # Move model to device BEFORE freezing
+        self.scgpt_model.to(self.device)
+
         # Freeze scGPT if requested
         if freeze_scgpt:
             for param in self.scgpt_model.parameters():
@@ -118,7 +121,7 @@ class scGPTConditionEmbedder(nn.Module):
     def _load_pretrained_weights(self, model_file: Path):
         """Load pretrained weights with proper handling"""
         try:
-            state_dict = torch.load(model_file, map_location=self.device)
+            state_dict = torch.load(model_file, map_location='cpu')  # Load to CPU first
 
             # Handle different checkpoint formats
             if "model_state_dict" in state_dict:
