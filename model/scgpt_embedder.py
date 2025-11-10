@@ -89,7 +89,7 @@ class scGPTConditionEmbedder(nn.Module):
             nn.LayerNorm(hidden_size),
             nn.GELU(),
             nn.Linear(hidden_size, hidden_size)
-        )
+        ).to(self.device)  # Move projection to device
 
         print(f"scGPT embedder initialized: {scgpt_dim} -> {hidden_size}")
 
