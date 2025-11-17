@@ -62,7 +62,7 @@ class Attention2(nn.Module):
         qkv = einops.rearrange(qkv, 'c n h fph -> n h c fph')  # 最后形状 num_repeat, num_heads, counts, feature_per_head
         q, k, v = qkv.unbind(0)  # make torchscript happy (cannot use tensor as tuple) (h c fph)
 
-        attn = (q @ k.transpose(-2, -1)) * self.scal
+        attn = (q @ k.transpose(-2, -1)) * self.scale
         attn = attn.softmax(dim=-1)
         attn = self.attn_drop(attn)
 
