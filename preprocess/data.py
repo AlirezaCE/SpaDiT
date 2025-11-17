@@ -50,27 +50,46 @@ CHUNK_SIZE = 20000
 #         return st_sample, sc_sample
 
 class ConditionalDiffusionDataset(Dataset):
-    def __init__(self, sc_path, st_path):
+    def __init__(self, sc_path, st_path, gene_ids=None):
+        """
+        Dataset for conditional diffusion model
+
+        Args:
+            sc_path: Path to scRNA-seq h5ad file
+            st_path: Path to spatial transcriptomics h5ad file
+            gene_ids: Optional numpy array of gene vocabulary indices for scGPT, shape (n_sc_genes,)
+        """
         self.sc_data = sc.read_h5ad(sc_path)
         self.st_data = sc.read_h5ad(st_path)
         self.st_data = self.st_data.to_df().T
         self.sc_data = self.sc_data.to_df().T
 
-
         self.gene_names = self.st_data.index.tolist()
+        self.sc_gene_names = self.sc_data.index.tolist()
 
         self.st_sample = torch.tensor(self.st_data.values, dtype=torch.float32)
         self.sc_sample = torch.tensor(self.sc_data.values, dtype=torch.float32)
         self.sc_data = torch.tensor(self.sc_data.values, dtype=torch.float32)
 
+        # Store gene IDs for scGPT
+        self.gene_ids = gene_ids
+        if gene_ids is not None:
+            self.gene_ids = torch.tensor(gene_ids, dtype=torch.long)
+
     def __len__(self):
         return len(self.st_data)
 
     def __getitem__(self, idx):
-        return self.st_sample[idx], self.sc_sample[idx], self.sc_data
+        if self.gene_ids is not None:
+            return self.st_sample[idx], self.sc_sample[idx], self.sc_data, self.gene_ids
+        else:
+            return self.st_sample[idx], self.sc_sample[idx], self.sc_data
 
     def get_gene_names(self):
         return self.gene_names
+
+    def get_sc_gene_names(self):
+        return self.sc_gene_names
 
 
 

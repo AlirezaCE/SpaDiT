@@ -100,36 +100,45 @@ def normal_train_diff(model,
 
     for epoch in t_epoch:
         epoch_loss = 0.
-        for i, (x, x_hat, x_cond) in enumerate(dataloader): # 去掉了, celltype
-            x, x_hat, x_cond = x.float().to(device), x_hat.float().to(device),x_cond.float().to(device)
-            # celltype = celltype.to(device)
+        for i, batch_data in enumerate(dataloader):
+            # Handle both with and without gene_ids
+            if len(batch_data) == 4:
+                x, x_hat, x_cond, gene_ids = batch_data
+                gene_ids = gene_ids[0] if gene_ids.dim() > 1 else gene_ids  # Take first since it's same for all
+                gene_ids = gene_ids.to(device)
+            else:
+                x, x_hat, x_cond = batch_data
+                gene_ids = None
+
+            x, x_hat, x_cond = x.float().to(device), x_hat.float().to(device), x_cond.float().to(device)
+
+            # Apply masking
             x, x_nonzero_mask, x_zero_mask = mask_tensor_with_masks(x, mask_zero_ratio, mask_nonzero_ratio)
             x_hat, x_hat_nonzero_mask, x_hat_zero_mask = mask_tensor_with_masks(x_hat, mask_zero_ratio, mask_nonzero_ratio)
 
+            # Generate noise
             x_noise = torch.randn(x.shape).to(device)
             x_hat_noise = torch.randn(x_hat.shape).to(device)
 
+            # Random timesteps
             timesteps = torch.randint(1, diffusion_step, (x.shape[0],)).long()
             timesteps = timesteps.to(device)
-            x_t = noise_scheduler.add_noise(x,
-                                            x_noise,
-                                            timesteps=timesteps)
 
-            x_hat_t = noise_scheduler.add_noise(x_hat,
-                                            x_hat_noise,
-                                            timesteps=timesteps)
+            # Add noise
+            x_t = noise_scheduler.add_noise(x, x_noise, timesteps=timesteps)
+            x_hat_t = noise_scheduler.add_noise(x_hat, x_hat_noise, timesteps=timesteps)
 
-            # mask = torch.tensor(mask).to(device)
-            # mask = (1-((torch.rand(x.shape[1]) < mask_ratio).int())).to(device)
-
+            # Create noisy inputs
             x_noisy = x_t * x_nonzero_mask + x * (1 - x_nonzero_mask)
             x_hat_noisy = x_hat_t * x_hat_nonzero_mask + x_hat * (1 - x_hat_nonzero_mask)
 
-            noise_pred = model(x_noisy, x_hat_noisy, t=timesteps.to(device), y=x_cond) # 去掉了, z=celltype
-            # loss = criterion(noise_pred, noise)
+            # Forward pass (with gene_ids if available)
+            noise_pred = model(x_noisy, x_hat_noisy, t=timesteps, y=x_cond, gene_ids=gene_ids)
 
-            loss = criterion(x_noise * x_nonzero_mask, noise_pred * x_nonzero_mask, x_noise * x_zero_mask,
-                             noise_pred *  x_zero_mask)
+            # Compute loss
+            loss = criterion(x_noise * x_nonzero_mask, noise_pred * x_nonzero_mask,
+                           x_noise * x_zero_mask, noise_pred * x_zero_mask)
+
             loss.backward()
             nn.utils.clip_grad_norm_(model.parameters(), 1.0)  # type: ignore
             optimizer.step()

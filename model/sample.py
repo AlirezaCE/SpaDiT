@@ -7,14 +7,24 @@ from preprocess.utils import mask_tensor_with_masks
 def model_sample_diff(model, device, dataloader, total_sample, time, is_condi, condi_flag):
     noise = []
     i = 0
-    for _, x_hat, x_cond in dataloader: # 计算整个shape得噪声 一次循环算batch大小  加上了celltype 去掉了, celltype
-        x_hat, x_cond = x_hat.float().to(device), x_cond.float().to(device) # x.float().to(device)
-        t = torch.from_numpy(np.repeat(time, x_cond.shape[0])).long().to(device)
-        # celltype = celltype.to(device)
-        if not is_condi:
-            n = model(total_sample[i:i+len(x_cond)], t, None) # 一次计算batch大小得噪声
+    for batch_data in dataloader:
+        # Handle both with and without gene_ids
+        if len(batch_data) == 4:
+            _, x_hat, x_cond, gene_ids = batch_data
+            gene_ids = gene_ids[0] if gene_ids.dim() > 1 else gene_ids
+            gene_ids = gene_ids.to(device)
         else:
-            n = model(total_sample[i:i+len(x_cond)], x_hat, t, x_cond, condi_flag=condi_flag) # 加上了celltype 去掉了, celltype
+            _, x_hat, x_cond = batch_data
+            gene_ids = None
+
+        x_hat, x_cond = x_hat.float().to(device), x_cond.float().to(device)
+        t = torch.from_numpy(np.repeat(time, x_cond.shape[0])).long().to(device)
+
+        if not is_condi:
+            n = model(total_sample[i:i+len(x_cond)], t, None)
+        else:
+            n = model(total_sample[i:i+len(x_cond)], x_hat, t, x_cond, gene_ids=gene_ids, condi_flag=condi_flag)
+
         noise.append(n)
         i = i+len(x_cond)
     noise = torch.cat(noise, dim=0)

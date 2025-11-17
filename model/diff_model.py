@@ -7,6 +7,7 @@ from timm.models.vision_transformer import PatchEmbed, Attention, Mlp
 import sys
 import torch.nn.functional as F
 from preprocess.utils import pca_with_torch
+from .scgpt_wrapper import scGPTEmbedder
 
 class SimpleMLP(nn.Module):
     def __init__(self, input_dim, hidden_dim, output_dim):
@@ -294,6 +295,8 @@ class DiT_diff(nn.Module):
                  classes,
                  pca_dim,
                  mlp_ratio=4.0,
+                 use_scgpt=False,
+                 scgpt_model_dir=None,
                  **kwargs) -> None:
         super().__init__()
 
@@ -306,6 +309,8 @@ class DiT_diff(nn.Module):
         self.mlp_ratio = mlp_ratio
         self.dit_type = dit_type
         self.pca_dim = pca_dim
+        self.use_scgpt = use_scgpt
+
         self.in_layer = nn.Sequential(
             nn.Linear(st_input_size, hidden_size),
             # nn.Dropout(p=0.5)
@@ -313,15 +318,29 @@ class DiT_diff(nn.Module):
         self.x_in_layer = nn.Sequential(
             nn.Linear(condi_input_size, hidden_size)
         )
-        self.cond_layer = nn.Sequential(
-            nn.Linear(self.condi_input_size, hidden_size),
-            # nn.Dropout(p=0.5)
-        )
 
-        self.cond_layer_atten= SelfAttention2(self.condi_input_size, self.hidden_size)
-        self.cond_layer_mlp = SimpleMLP(self.condi_input_size, self.hidden_size, self.hidden_size*2)
-        # celltype emb
-        self.condi_emb = nn.Embedding(classes, hidden_size)
+        # Initialize scGPT embedder if requested
+        if use_scgpt and scgpt_model_dir is not None:
+            print("Initializing scGPT embedder for conditioning...")
+            self.scgpt_embedder = scGPTEmbedder(
+                scgpt_model_dir=scgpt_model_dir,
+                freeze_scgpt=True,
+            )
+            # scGPT outputs 512-dim embeddings, project to hidden_size*2
+            self.scgpt_projection = nn.Linear(self.scgpt_embedder.d_model, hidden_size * 2)
+            print(f"scGPT embedder initialized. Will project {self.scgpt_embedder.d_model} -> {hidden_size * 2}")
+        else:
+            self.scgpt_embedder = None
+            # Keep original conditioning layers
+            self.cond_layer = nn.Sequential(
+                nn.Linear(self.condi_input_size, hidden_size),
+                # nn.Dropout(p=0.5)
+            )
+            self.cond_layer_atten = SelfAttention2(self.condi_input_size, self.hidden_size)
+            self.cond_layer_mlp = SimpleMLP(self.condi_input_size, self.hidden_size, self.hidden_size*2)
+            # celltype emb (not used when scGPT is enabled)
+            self.condi_emb = nn.Embedding(classes, hidden_size)
+
         self.unet = UNet(in_features=hidden_size * 2, out_features=self.st_input_size)
         # time emb
         self.time_emb = TimestepEmbedder(hidden_size=self.hidden_size *2)
@@ -349,8 +368,9 @@ class DiT_diff(nn.Module):
 
         self.apply(_basic_init)
 
-        # Initialize label embedding table:
-        nn.init.normal_(self.condi_emb.weight, std=0.02)
+        # Initialize label embedding table (only if not using scGPT):
+        if not self.use_scgpt:
+            nn.init.normal_(self.condi_emb.weight, std=0.02)
 
         # Initialize timestep embedding MLP:
         nn.init.normal_(self.time_emb.mlp[0].weight, std=0.02)
@@ -370,23 +390,51 @@ class DiT_diff(nn.Module):
         nn.init.constant_(self.out_layer.linear.weight, 0)
         nn.init.constant_(self.out_layer.linear.bias, 0)
 
-    def forward(self, x, x_hat, t, y, **kwargs):
+    def forward(self, x, x_hat, t, y, gene_ids=None, **kwargs):
+        """
+        Forward pass
+
+        Args:
+            x: ST data (noisy), shape (batch, st_input_size)
+            x_hat: SC data, shape (batch, condi_input_size)
+            t: timestep, shape (batch,)
+            y: conditioning data (SC expression), shape (batch, condi_input_size)
+            gene_ids: gene vocabulary indices for scGPT, shape (condi_input_size,) - optional
+        """
         x = x.float()
         x_hat = x_hat.float()
         x_hat = self.x_in_layer(x_hat)
         # x_hat = pca_with_torch(x_hat, self.pca_dim)
+
         t = self.time_emb(t)
-        y = self.cond_layer_mlp(y)
-        # y = self.cond_layer(y)
-        # y = self.cond_layer_atten(y)
-        # z = self.condi_emb(z)
+
+        # Use scGPT for conditioning if enabled
+        if self.use_scgpt and self.scgpt_embedder is not None:
+            if gene_ids is None:
+                raise ValueError("gene_ids must be provided when use_scgpt=True")
+
+            # Get dynamic embeddings from scGPT based on gene expression
+            # y shape: (batch, n_genes), gene_ids shape: (n_genes,)
+            scgpt_emb = self.scgpt_embedder(gene_ids, y)  # (batch, 512)
+            y = self.scgpt_projection(scgpt_emb)  # (batch, hidden_size*2)
+        else:
+            # Original conditioning
+            y = self.cond_layer_mlp(y)
+            # y = self.cond_layer(y)
+            # y = self.cond_layer_atten(y)
+            # z = self.condi_emb(z)
+
         c = t + y
         # c = t
 
         x = self.in_layer(x)
         x = torch.cat([x, x_hat], dim=1)
-        # for blk in self.blks:
-        #     x = blk(x, c)
-        # return self.out_layer(x, c)
-        x = self.unet(x)
-        return x
+
+        # Use DiT blocks
+        for blk in self.blks:
+            x = blk(x, c)
+        return self.out_layer(x, c)
+
+        # UNet version (commented out)
+        # x = self.unet(x)
+        # return x
