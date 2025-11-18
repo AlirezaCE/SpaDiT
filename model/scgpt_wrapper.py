@@ -175,7 +175,7 @@ def create_gene_id_mapping(adata, vocab: GeneVocab):
         gene_ids: numpy array of vocab indices, shape (n_genes,)
     """
     gene_names = adata.var_names.tolist()
-    pad_idx = vocab[vocab.pad_token] if hasattr(vocab, 'pad_token') else vocab['<pad>']
+    pad_idx = vocab[vocab.pad_token] if hasattr(vocab, 'pad_token') and vocab.pad_token is not None else vocab['<pad>']
 
     gene_ids = np.array([vocab[g] if g in vocab else pad_idx for g in gene_names])
 
