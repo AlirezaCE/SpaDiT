@@ -100,7 +100,10 @@ def normal_train_diff(model,
 
     for epoch in t_epoch:
         epoch_loss = 0.
+        print(f"\nEpoch {epoch + 1}/{num_epoch} starting...")
         for i, batch_data in enumerate(dataloader):
+            if i == 0:
+                print(f"  Processing first batch...")
             # Handle both with and without gene_ids
             if len(batch_data) == 4:
                 x, x_hat, x_cond, gene_ids = batch_data
@@ -133,17 +136,25 @@ def normal_train_diff(model,
             x_hat_noisy = x_hat_t * x_hat_nonzero_mask + x_hat * (1 - x_hat_nonzero_mask)
 
             # Forward pass (with gene_ids if available)
+            if i == 0:
+                print(f"  Running model forward pass...")
             noise_pred = model(x_noisy, x_hat_noisy, t=timesteps, y=x_cond, gene_ids=gene_ids)
+            if i == 0:
+                print(f"  Forward pass complete, computing loss...")
 
             # Compute loss
             loss = criterion(x_noise * x_nonzero_mask, noise_pred * x_nonzero_mask,
                            x_noise * x_zero_mask, noise_pred * x_zero_mask)
 
+            if i == 0:
+                print(f"  Running backward pass...")
             loss.backward()
             nn.utils.clip_grad_norm_(model.parameters(), 1.0)  # type: ignore
             optimizer.step()
             optimizer.zero_grad()
             epoch_loss += loss.item()
+            if i == 0:
+                print(f"  First batch complete! Loss: {loss.item():.4f}")
 
         scheduler.step()
         epoch_loss = epoch_loss / (i + 1)  # type: ignore
