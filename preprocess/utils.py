@@ -195,9 +195,11 @@ def split_dataset_with_gene_names(dataset, train_ratio=0.7, val_ratio=0.2, test_
     val_dataset = torch.utils.data.Subset(dataset, val_indices)
     test_dataset = torch.utils.data.Subset(dataset, test_indices)
 
-    train_gene_names = [dataset.get_gene_names()[i] for i in train_indices]
-    val_gene_names = [dataset.get_gene_names()[i] for i in val_indices]
-    test_gene_names = [dataset.get_gene_names()[i] for i in test_indices]
+    # Gene names are the same for all splits (we split by spots, not genes)
+    gene_names = dataset.get_gene_names()
+    train_gene_names = gene_names
+    val_gene_names = gene_names
+    test_gene_names = gene_names
 
     return (train_dataset, train_gene_names), (val_dataset, val_gene_names), (test_dataset, test_gene_names)
 
