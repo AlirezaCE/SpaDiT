@@ -61,15 +61,17 @@ class ConditionalDiffusionDataset(Dataset):
         """
         self.sc_data = sc.read_h5ad(sc_path)
         self.st_data = sc.read_h5ad(st_path)
-        self.st_data = self.st_data.to_df().T
-        self.sc_data = self.sc_data.to_df().T
 
-        self.gene_names = self.st_data.index.tolist()
-        self.sc_gene_names = self.sc_data.index.tolist()
+        # Convert to dataframes (keep original orientation: rows=spots/cells, cols=genes)
+        self.st_data_df = self.st_data.to_df()  # (n_st_spots, n_st_genes)
+        self.sc_data_df = self.sc_data.to_df()  # (n_sc_cells, n_sc_genes)
 
-        self.st_sample = torch.tensor(self.st_data.values, dtype=torch.float32)
-        self.sc_sample = torch.tensor(self.sc_data.values, dtype=torch.float32)
-        self.sc_data = torch.tensor(self.sc_data.values, dtype=torch.float32)
+        self.gene_names = self.st_data.var_names.tolist()  # ST gene names
+        self.sc_gene_names = self.sc_data.var_names.tolist()  # SC gene names
+
+        # Convert to tensors: (n_spots/cells, n_genes)
+        self.st_sample = torch.tensor(self.st_data_df.values, dtype=torch.float32)  # (n_st_spots, n_st_genes)
+        self.sc_sample = torch.tensor(self.sc_data_df.values, dtype=torch.float32)  # (n_sc_cells, n_sc_genes)
 
         # Store gene IDs for scGPT
         self.gene_ids = gene_ids
@@ -77,14 +79,23 @@ class ConditionalDiffusionDataset(Dataset):
             self.gene_ids = torch.tensor(gene_ids, dtype=torch.long)
 
     def __len__(self):
-        return len(self.st_data)
+        # Return number of ST spots (we iterate over spatial spots)
+        return len(self.st_sample)
 
     def __getitem__(self, idx):
-        # Return: ST sample at idx, SC sample at idx (for x_hat), SC sample at idx (for conditioning), gene_ids
+        # Get ST spot at idx
+        st_spot = self.st_sample[idx]  # (n_st_genes,)
+
+        # For SC conditioning, we need to handle the mismatch between n_st_spots (2177) and n_sc_cells (887)
+        # Strategy: cycle through SC cells (when idx >= n_sc_cells, wrap around)
+        sc_idx = idx % len(self.sc_sample)
+        sc_cell = self.sc_sample[sc_idx]  # (n_sc_genes,)
+
+        # Return: ST spot, SC cell (for x_hat), SC cell (for scGPT conditioning), gene_ids
         if self.gene_ids is not None:
-            return self.st_sample[idx], self.sc_sample[idx], self.sc_sample[idx], self.gene_ids
+            return st_spot, sc_cell, sc_cell, self.gene_ids
         else:
-            return self.st_sample[idx], self.sc_sample[idx], self.sc_sample[idx]
+            return st_spot, sc_cell, sc_cell
 
     def get_gene_names(self):
         return self.gene_names
