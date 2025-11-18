@@ -163,24 +163,86 @@ class scGPTEmbedder(nn.Module):
         return cell_emb
 
 
-def create_gene_id_mapping(adata, vocab: GeneVocab):
+def create_gene_id_mapping(sc_adata, st_adata, vocab: GeneVocab):
     """
-    Map AnnData gene names to vocab indices
+    Map AnnData gene names to vocab indices for both SC and ST data.
+    Handles transposed data and mouse-to-human gene name conversion.
 
     Args:
-        adata: AnnData object
+        sc_adata: Single-cell AnnData object
+        st_adata: Spatial transcriptomics AnnData object
         vocab: scGPT GeneVocab
 
     Returns:
-        gene_ids: numpy array of vocab indices, shape (n_genes,)
+        sc_gene_ids: numpy array of vocab indices for SC data, shape (n_sc_genes,)
+        st_gene_ids: numpy array of vocab indices for ST data, shape (n_st_genes,)
     """
-    gene_names = adata.var_names.tolist()
     pad_idx = vocab[vocab.pad_token] if hasattr(vocab, 'pad_token') and vocab.pad_token is not None else vocab['<pad>']
 
-    gene_ids = np.array([vocab[g] if g in vocab else pad_idx for g in gene_names])
+    def get_gene_names(adata):
+        """Extract gene names, handling transposed data"""
+        # Check if data appears transposed (var_names look like barcodes)
+        var_sample = str(adata.var_names[0]) if len(adata.var_names) > 0 else ""
+        obs_sample = str(adata.obs_names[0]) if len(adata.obs_names) > 0 else ""
 
-    # Report coverage
-    coverage = (gene_ids != pad_idx).sum() / len(gene_ids) * 100
-    print(f"Gene coverage: {coverage:.2f}% ({(gene_ids != pad_idx).sum()}/{len(gene_ids)} genes in vocab)")
+        # Cell barcodes typically have dashes and look like "AAACCTGA-1"
+        var_looks_like_barcode = '-' in var_sample and any(c.isdigit() for c in var_sample)
+        obs_looks_like_gene = not ('-' in obs_sample and any(c.isdigit() for c in obs_sample))
 
-    return gene_ids
+        if var_looks_like_barcode and obs_looks_like_gene:
+            print(f"  Data appears transposed! Using obs_names as genes")
+            return adata.obs_names.tolist()
+        else:
+            return adata.var_names.tolist()
+
+    def convert_mouse_to_human(gene_name):
+        """Convert mouse gene names to human (simple uppercase conversion)"""
+        if gene_name in vocab:
+            return gene_name  # Already matches
+
+        # Try uppercase (most human genes are uppercase)
+        upper_name = gene_name.upper()
+        if upper_name in vocab:
+            return upper_name
+
+        # Try capitalizing first letter only
+        cap_name = gene_name[0].upper() + gene_name[1:] if len(gene_name) > 1 else gene_name.upper()
+        if cap_name in vocab:
+            return cap_name
+
+        return None  # No match found
+
+    def map_genes(adata, label):
+        """Map genes for a dataset"""
+        gene_names = get_gene_names(adata)
+        gene_ids = []
+        direct_matches = 0
+        converted_matches = 0
+
+        for g in gene_names:
+            if g in vocab:
+                gene_ids.append(vocab[g])
+                direct_matches += 1
+            else:
+                # Try mouse-to-human conversion
+                converted = convert_mouse_to_human(g)
+                if converted and converted in vocab:
+                    gene_ids.append(vocab[converted])
+                    converted_matches += 1
+                else:
+                    gene_ids.append(pad_idx)
+
+        gene_ids = np.array(gene_ids)
+
+        # Report coverage
+        total_matches = direct_matches + converted_matches
+        coverage = total_matches / len(gene_ids) * 100
+        print(f"{label} gene coverage: {coverage:.2f}% ({total_matches}/{len(gene_ids)} genes in vocab)")
+        print(f"  Direct matches: {direct_matches}, Converted matches: {converted_matches}")
+
+        return gene_ids
+
+    sc_gene_ids = map_genes(sc_adata, "SC")
+    st_gene_ids = map_genes(st_adata, "ST")
+
+    return sc_gene_ids, st_gene_ids
