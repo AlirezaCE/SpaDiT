@@ -80,10 +80,11 @@ class ConditionalDiffusionDataset(Dataset):
         return len(self.st_data)
 
     def __getitem__(self, idx):
+        # Return: ST sample at idx, SC sample at idx (for x_hat), SC sample at idx (for conditioning), gene_ids
         if self.gene_ids is not None:
-            return self.st_sample[idx], self.sc_sample[idx], self.sc_data, self.gene_ids
+            return self.st_sample[idx], self.sc_sample[idx], self.sc_sample[idx], self.gene_ids
         else:
-            return self.st_sample[idx], self.sc_sample[idx], self.sc_data
+            return self.st_sample[idx], self.sc_sample[idx], self.sc_sample[idx]
 
     def get_gene_names(self):
         return self.gene_names
