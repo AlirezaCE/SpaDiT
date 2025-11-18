@@ -84,3 +84,66 @@ if h5ad_files:
         print("\n⚠️  WARNING: obs_names has better gene overlap than var_names!")
         print("     Your h5ad file appears to be TRANSPOSED (rows/columns swapped)")
         print("     You may need to transpose with: adata = adata.T")
+
+    # Test mouse-to-human gene conversion
+    print("\n=== Testing Mouse-to-Human Gene Conversion ===")
+
+    def convert_mouse_to_human(gene_name, vocab_set):
+        """Simple mouse to human gene name conversion"""
+        if gene_name in vocab_set:
+            return gene_name  # Already matches
+
+        # Try uppercase (most human genes are uppercase)
+        upper_name = gene_name.upper()
+        if upper_name in vocab_set:
+            return upper_name
+
+        # Try capitalizing first letter only (some genes like Xkr4 -> XKR4)
+        cap_name = gene_name[0].upper() + gene_name[1:] if len(gene_name) > 1 else gene_name.upper()
+        if cap_name in vocab_set:
+            return cap_name
+
+        return None  # No match found
+
+    # Use obs_names since they contain the actual genes
+    mouse_genes = data_genes_from_obs
+    converted_matches = 0
+    examples = []
+
+    for gene in mouse_genes[:100]:  # Test first 100 genes
+        converted = convert_mouse_to_human(gene, vocab_genes)
+        if converted and converted != gene:
+            converted_matches += 1
+            if len(examples) < 10:
+                examples.append(f"{gene} -> {converted}")
+
+    print(f"Tested first 100 genes:")
+    print(f"  Direct matches: {len([g for g in mouse_genes[:100] if g in vocab_genes])}")
+    print(f"  Conversion matches: {converted_matches}")
+    print(f"  Total matches: {len([g for g in mouse_genes[:100] if g in vocab_genes]) + converted_matches}")
+
+    if examples:
+        print(f"\nExample conversions:")
+        for ex in examples:
+            print(f"  {ex}")
+
+    # Now test on ALL genes
+    print("\n=== Testing on ALL genes ===")
+    all_matches = 0
+    direct_matches = 0
+    converted_matches_all = 0
+
+    for gene in mouse_genes:
+        if gene in vocab_genes:
+            direct_matches += 1
+            all_matches += 1
+        else:
+            converted = convert_mouse_to_human(gene, vocab_genes)
+            if converted:
+                converted_matches_all += 1
+                all_matches += 1
+
+    print(f"Total genes: {len(mouse_genes)}")
+    print(f"Direct matches: {direct_matches} ({direct_matches/len(mouse_genes)*100:.2f}%)")
+    print(f"Conversion matches: {converted_matches_all} ({converted_matches_all/len(mouse_genes)*100:.2f}%)")
+    print(f"Total coverage: {all_matches} / {len(mouse_genes)} ({all_matches/len(mouse_genes)*100:.2f}%)")
