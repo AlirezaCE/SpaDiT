@@ -121,12 +121,9 @@ class scGPTEmbedder(nn.Module):
         else:
             gene_ids_np = np.array(gene_ids)
 
-        print(f"    [scGPT] Converting expression to numpy...")
         expression_values_np = expression_values.cpu().numpy()
-        print(f"    [scGPT] Expression shape: {expression_values_np.shape}")
 
         # Tokenize and pad batch (filters non-zero genes, adds <cls> token)
-        print(f"    [scGPT] Starting tokenization...")
         tokenized = tokenize_and_pad_batch(
             data=expression_values_np,
             gene_ids=gene_ids_np,
@@ -139,16 +136,13 @@ class scGPTEmbedder(nn.Module):
             cls_token="<cls>",
             return_pt=True,
         )
-        print(f"    [scGPT] Tokenization complete")
 
         # Move to device
-        print(f"    [scGPT] Moving to device {device}...")
         src = tokenized['genes'].to(device)  # (batch, seq_len)
         values = tokenized['values'].to(device)  # (batch, seq_len)
 
         # Create padding mask
         src_key_padding_mask = (src == self.vocab[self.pad_token])
-        print(f"    [scGPT] Running scGPT model inference...")
 
         # Forward through scGPT (frozen, no gradients)
         with torch.no_grad():
@@ -163,11 +157,9 @@ class scGPTEmbedder(nn.Module):
                 ECS=False,
             )
 
-        print(f"    [scGPT] Inference complete, extracting embeddings...")
         # Extract cell embedding from <cls> token
         cell_emb = output['cell_emb']  # (batch, 512)
 
-        print(f"    [scGPT] Done! Returning embeddings of shape {cell_emb.shape}")
         return cell_emb
 
 
