@@ -31,9 +31,20 @@ if h5ad_files:
     print(f"\n=== Checking first file: {h5ad_files[0]} ===")
     adata = sc.read_h5ad(h5ad_files[0])
 
+    print(f"AnnData shape: {adata.shape} (n_obs x n_vars)")
+    print(f"adata.var_names (should be genes): {len(adata.var_names)} entries")
+    print(f"adata.obs_names (should be cells/spots): {len(adata.obs_names)} entries")
+
     data_genes = adata.var_names.tolist()
-    print(f"Dataset has {len(data_genes)} genes")
-    print(f"First 20 genes in dataset: {data_genes[:20]}")
+    data_obs = adata.obs_names.tolist()
+
+    print(f"\nFirst 20 var_names: {data_genes[:20]}")
+    print(f"First 20 obs_names: {data_obs[:20]}")
+
+    # Check which one looks like genes
+    print("\n=== Checking var_names ===")
+    data_genes = adata.var_names.tolist()
+    print(f"Dataset has {len(data_genes)} var_names")
 
     # Check overlap
     data_genes_set = set(data_genes)
@@ -56,3 +67,20 @@ if h5ad_files:
 
     if len(case_insensitive_overlap) > len(overlap):
         print(f"\n✓ Case-insensitive matching finds {len(case_insensitive_overlap)} genes ({len(case_insensitive_overlap)/len(data_genes)*100:.2f}%)")
+
+    # Now check obs_names (in case axes are swapped)
+    print("\n=== Checking obs_names (in case data is transposed) ===")
+    data_genes_from_obs = adata.obs_names.tolist()
+    print(f"Dataset has {len(data_genes_from_obs)} obs_names")
+
+    data_genes_from_obs_set = set(data_genes_from_obs)
+    overlap_obs = vocab_genes & data_genes_from_obs_set
+    print(f"Gene overlap (using obs_names): {len(overlap_obs)} / {len(data_genes_from_obs)} ({len(overlap_obs)/len(data_genes_from_obs)*100:.2f}%)")
+
+    if overlap_obs:
+        print(f"Example matching genes: {list(overlap_obs)[:10]}")
+
+    if len(overlap_obs) > len(overlap):
+        print("\n⚠️  WARNING: obs_names has better gene overlap than var_names!")
+        print("     Your h5ad file appears to be TRANSPOSED (rows/columns swapped)")
+        print("     You may need to transpose with: adata = adata.T")
