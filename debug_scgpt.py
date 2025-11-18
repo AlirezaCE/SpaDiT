@@ -59,3 +59,50 @@ except Exception as e:
     print(f"  Error: {e}")
     import traceback
     traceback.print_exc()
+
+print("\n" + "="*60)
+print("Testing full scGPT embedder forward pass...")
+print("="*60)
+
+from model.scgpt_wrapper import scGPTEmbedder
+
+print("Initializing scGPT embedder...")
+start = time.time()
+embedder = scGPTEmbedder(
+    scgpt_model_dir='scgpt_models/scGPT_brain',
+    freeze_scgpt=True
+)
+embedder = embedder.to('cuda:0')
+elapsed = time.time() - start
+print(f"✓ Embedder initialized in {elapsed:.2f} seconds")
+
+# Convert to tensors on GPU
+gene_ids_tensor = torch.from_numpy(gene_ids).long().to('cuda:0')
+expression_tensor = torch.from_numpy(expression_values).float().to('cuda:0')
+
+print(f"\nInput shapes:")
+print(f"  gene_ids: {gene_ids_tensor.shape}, device: {gene_ids_tensor.device}")
+print(f"  expression: {expression_tensor.shape}, device: {expression_tensor.device}")
+
+print("\nRunning forward pass...")
+start = time.time()
+try:
+    with torch.no_grad():
+        output = embedder(gene_ids_tensor, expression_tensor)
+    elapsed = time.time() - start
+    print(f"✓ Forward pass completed in {elapsed:.2f} seconds")
+    print(f"  Output shape: {output.shape}")
+except Exception as e:
+    elapsed = time.time() - start
+    print(f"✗ Forward pass FAILED after {elapsed:.2f} seconds")
+    print(f"  Error: {e}")
+    import traceback
+    traceback.print_exc()
+
+print("\nTesting multiple forward passes (simulating training)...")
+for i in range(5):
+    start = time.time()
+    with torch.no_grad():
+        output = embedder(gene_ids_tensor, expression_tensor)
+    elapsed = time.time() - start
+    print(f"  Batch {i+1}: {elapsed:.2f}s")
